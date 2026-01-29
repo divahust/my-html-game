@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XSimple 电子靶师 v5.0 - XSimple AI Revision</title>
+    
+    <!-- 依赖库 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    
+    <style>
+        /* XSimple Dark Theme */
+        body { 
+            margin: 0; background: #000; color: #fff; 
+            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; overflow: hidden; height: 100vh;
+            display: flex; justify-content: center; align-items: center;
+            user-select: none;
+        }
+
+        #stage {
+            position: relative; width: 1280px; height: 720px;
+            box-shadow: 0 0 50px rgba(0, 255, 255, 0.1);
+            background: #111; overflow: hidden;
+        }
+
+        /* 核心画布 */
+        canvas { 
+            position: absolute; top:0; left:0;
+            width: 100%; height: 100%; 
+            transform: scaleX(-1); 
+        }
+        
+        #video_raw { display: none; }
+        .bg-img { display: none; }
+
+        /* UI 层 */
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 20;
+            pointer-events: none;
+        }
+
+        /* 游戏中的实时数据 HUD */
+        #game-hud {
+            display: none; /* 默认隐藏 */
+            position: absolute; top: 0; left: 0; width: 100%;
+            padding: 20px;
+            box-sizing: border-box;
+            display: flex; justify-content: space-between;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
+        }
+        .hud-item { text-align: center; text-shadow: 0 0 10px #00f0ff; }
+        .hud-val { font-size: 36px; font-weight: bold; color: #fff; font-family: Consolas, monospace;}
+        .hud-label { font-size: 12px; color: #aaa; text-transform: uppercase; letter-spacing: 2px;}
+
+        /* 设置按钮（游戏中） */
+        #btn-settings {
+            pointer-events: auto;
+            position: absolute; top: 20px; right: 20px;
+            background: rgba(0,0,0,0.5); border: 1px solid #555;
+            color: #fff; width: 40px; height: 40px; border-radius: 50%;
+            cursor: pointer; display: none; z-index: 50;
+            font-size: 20px; line-height: 40px; text-align: center;
+        }
+        #btn-settings:hover { background: #00f0ff; color:#000; }
+
+        /* 菜单面板 */
+        #panel-menu {
+            pointer-events: auto;
+            position: absolute; right: 20px; top: 70px; /* 下移一点 */
+            background: rgba(10, 14, 18, 0.95);
+            width: 340px; border-radius: 8px;
+            border: 1px solid #334; 
+            max-height: 80vh; overflow-y: auto;
+            backdrop-filter: blur(10px);
+            display: none; /* 就绪后显示 */
+            box-shadow: -10px 10px 30px rgba(0,0,0,0.5);
+            transition: opacity 0.3s;
+        }
+
+        .panel-header {
+            background: #1a222c; padding: 15px;
+            border-bottom: 1px solid #445; color: #00f0ff; font-weight: bold;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+
+        .panel-body { padding: 15px; }
+        .ctl-group { margin-bottom: 12px; border-top: 1px dashed #333; padding-top:10px; }
+        label { display: flex; justify-content: space-between; font-size: 13px; color: #bbb; margin-bottom: 4px; }
+        label span { color: #fff; }
+        input[type=range] { width: 100%; cursor: pointer; height: 8px; border-radius: 4px; accent-color: #00f0ff; }
+        select { width: 100%; background: #222; color: #fff; padding: 8px; border: 1px solid #444; }
+
+        .btn-big {
+            width: 100%; padding: 15px; font-size: 18px; font-weight: bold; cursor: pointer;
+            margin-top: 10px; border: none; border-radius: 4px;
+            background: linear-gradient(90deg, #00C9FF, #92FE9D); 
+            color: #002; transition: filter 0.2s;
+        }
+        .btn-big:hover { filter: brightness(1.2);box-shadow: 0 0 15px #00C9FF; }
+
+        /* 结算弹窗 Modal */
+        #result-modal {
+            display: none; pointer-events: auto;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85);
+            z-index: 100;
+            flex-direction: column; justify-content: center; align-items: center;
+            backdrop-filter: blur(5px);
+        }
+        .modal-content {
+            background: #111; border: 2px solid #00f0ff; padding: 40px;
+            border-radius: 12px; text-align: center;
+            box-shadow: 0 0 50px rgba(0, 240, 255, 0.3);
+            width: 400px;
+        }
+        .score-title { color: #aaa; font-size: 14px; letter-spacing: 2px; }
+        .score-final { font-size: 80px; color: #fff; font-weight: bold; margin: 10px 0; text-shadow: 0 0 20px cyan; font-family: Impact, sans-serif;}
+        .score-sub { color: #888; margin-bottom: 30px; }
+        .btn-restart { 
+            background: #00f0ff; color: #000; padding: 12px 30px; 
+            border:none; font-size: 18px; font-weight: bold; cursor: pointer; border-radius: 4px; 
+        }
+
+        /* Loader */
+        #loader {
+            position: absolute; top:0; left:0; width:100%; height:100%; background: #000; z-index: 200;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+        }
+        .load-bar-bg { width: 300px; height: 4px; background: #333; margin: 20px; }
+        .load-bar { width: 0%; height: 100%; background: #00f0ff; transition: width 0.3s;}
+
+    </style>
+</head>
+<body>
+    
+    <!-- 素材 -->
+    <img id="img_forest" class="bg-img" src="https://images.unsplash.com/photo-1441974231531-c6227db76b6e?q=80&w=1280&auto=format&fit=crop" crossorigin="anonymous">
+    <img id="img_city" class="bg-img" src="https://images.unsplash.com/photo-1605218427387-bc4fc32c1c73?q=80&w=1280&auto=format&fit=crop" crossorigin="anonymous">
+
+    <!-- 加载Loading -->
+    <div id="loader">
+        <h2 style="color:#00f0ff">XSimple Core Starting</h2>
+        <div class="load-bar-bg"><div class="load-bar" id="load-prog"></div></div>
+        <div style="color:#666" id="load-txt">正在载入神经网络...</div>
+        <div id="err-log" style="color:red; margin-top:10px"></div>
+    </div>
+
+    <div id="stage">
+        <video id="video_raw" playsinline></video>
+        <!-- 主画布 -->
+        <canvas id="MainCVS"></canvas>
+        
+        <!-- 操作UI层 -->
+        <div id="ui-layer">
+            
+            <!-- 游戏内 HUD (实时积分) -->
+            <div id="game-hud" style="display:none;">
+                <div class="hud-item">
+                    <div class="hud-val" id="hud-score">0</div>
+                    <div class="hud-label">Total Score</div>
+                </div>
+                <!-- 中间留空 -->
+                <div style="flex:1"></div>
+                <!-- 倒计时 -->
+                <div class="hud-item" style="color:#ffaa00">
+                    <div class="hud-val" id="hud-time">00</div>
+                    <div class="hud-label">Secs</div>
+                </div>
+                <div style="width:20px"></div>
+                <!-- 生命值 -->
+                 <div class="hud-item" style="color:#ff4444">
+                    <div class="hud-val" id="hud-hp">3</div>
+                    <div class="hud-label">Lives</div>
+                </div>
+            </div>
+
+            <!-- 设置呼出按钮 -->
+            <div id="btn-settings" onclick="TOGGLE_PANEL()">⚙️</div>
+
+            <!-- 参数面板 -->
+            <div id="panel-menu">
+                <div class="panel-header">XSimple 电子靶师 <small id="fps-counter" style="color:#666">v5.0</small></div>
+                <div class="panel-body">
+                    <div class="ctl-group">
+                        <label>背景模式 (虚化已移除)</label>
+                        <select id="s_bg">
+                            <option value="REAL" selected>🎥 摄像头实景 (Default)</option>
+                            <option value="IMG_FOREST">🌲 在大自然训练</option>
+                            <option value="IMG_CITY">🌆 可以在没人的夜晚</option>
+                        </select>
+                    </div>
+
+                    <div class="ctl-group">
+                        <label>训练限时 <span>3 mins</span></label>
+                        <input type="range" id="rn_duration" min="30" max="300" step="30" value="180">
+                        <label>重力下坠速度 (难度/BPM)</label>
+                        <input type="range" id="rn_speed" min="2" max="15" step="1" value="6">
+                    </div>
+
+                    <div class="ctl-group">
+                        <label style="color:#ff5e5e">💣 炸弹出现率 <span id="val_bomb">20%</span></label>
+                        <input type="range" id="rn_bomb" min="0" max="50" value="20">
+                    </div>
+                
+                    <div class="ctl-group">
+                        <label style="color:cyan">↔ 水平摆拳靶 <span id="val_horz">30</span></label>
+                        <input type="range" id="rn_horz" min="0" max="100" value="30">
+
+                        <label style="color:orange">↕ 垂直切削靶 <span id="val_vert">30</span></label>
+                        <input type="range" id="rn_vert" min="0" max="100" value="30">
+                        
+                        <label style="color:#0f0">◎ 自由靶 <span id="val_free">20</span></label>
+                        <input type="range" id="rn_free" min="0" max="100" value="20">
+                    </div>
+
+                    <button class="btn-big" onclick="ACTION_START()">开始训练 (Start)</button>
+                    <!-- 停止按钮移动到这里，仅在只有面板显示时作为紧急停止 -->
+                    <!-- 游戏中通过右上角齿轮 -> 弹出面板 -> 停止 -->
+                </div>
+            </div>
+
+            <!-- 结算弹窗 -->
+            <div id="result-modal">
+                <div class="modal-content">
+                    <div class="score-title">TRAINING COMPLETE</div>
+                    <div class="score-final" id="res-score">0</div>
+                    <div class="score-sub" id="res-detail">Great Job!</div>
+                    <button class="btn-restart" onclick="CLOSE_RESULT()">再来一次 (REPLAY)</button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+<script>
+    /* =========================================
+       XSimple Engine - AI Assistant Modified
+       ========================================= */
+
+    const CVS = document.getElementById('MainCVS');
+    const CTX = CVS.getContext('2d', { alpha: false });
+    
+    // Globals
+    const W = 1280; 
+    const H = 720;
+    CVS.width = W; CVS.height = H;
+
+    let POSE = null;
+    let FRAME_DATA = null;
+    
+    const STATE = {
+        scene: 'MENU', // 'MENU', 'GAME', 'PAUSE'
+        ready: false,
+        useSeg: false,
+        timeLeft: 0,
+        score: 0,
+        hp: 3,
+        startTime: 0
+    };
+
+    const PARAMS = {
+        bgMode: 'REAL',
+        speed: 6,
+        dur: 180,
+        bombPct: 20,
+        wHorz: 30, wVert: 30, wFree: 20
+    };
+
+    let GameObjects = { targets: [], particles: [], floatText: [] };
+    let Hands = {
+        L: {x:0, y:0, vx:0, vy:0},
+        R: {x:0, y:0, vx:0, vy:0} 
+    };
+    
+    const DOM = {
+        panel: document.getElementById('panel-menu'),
+        loader: document.getElementById('loader'),
+        txtLd: document.getElementById('load-txt'),
+        pgLd: document.getElementById('load-prog'),
+        gameHud: document.getElementById('game-hud'),
+        hudScore: document.getElementById('hud-score'),
+        hudTime: document.getElementById('hud-time'),
+        hudHp: document.getElementById('hud-hp'),
+        resModal: document.getElementById('result-modal'),
+        settingsBtn: document.getElementById('btn-settings'),
+        // Inputs
+        slSpeed: document.getElementById('rn_speed'),
+        slDur: document.getElementById('rn_duration'),
+        slBomb: document.getElementById('rn_bomb'),
+        sBg: document.getElementById('s_bg')
+    };
+
+    // Binding Inputs
+    ['bomb','horz','vert','free'].forEach(k => {
+        document.getElementById('rn_'+k).oninput = (e) => {
+            PARAMS[k==='bomb'?'bombPct':('w'+k.charAt(0).toUpperCase()+k.slice(1))] = parseInt(e.target.value);
+            document.getElementById('val_'+k).innerText = e.target.value + (k==='bomb'?'%':'w');
+        }
+    });
+    DOM.slSpeed.oninput = e => PARAMS.speed = parseInt(e.target.value);
+    DOM.slDur.oninput = e => { PARAMS.dur = parseInt(e.target.value); e.target.previousElementSibling.innerText = e.target.value+"s"; }
+    
+    DOM.sBg.onchange = e => {
+        PARAMS.bgMode = e.target.value;
+        const needsSeg = (PARAMS.bgMode !== 'REAL');
+        if(POSE) POSE.setOptions({ enableSegmentation: needsSeg });
+    };
+
+    /* =========================================
+       AUDIO SYSTEM (Rhythmic Synth)
+       Automatically generates beat based on BGM
+       ========================================= */
+    class AudioSynth {
+        constructor() {
+            this.ctx = null;
+            this.isPlaying = false;
+            this.nextNoteTime = 0;
+            this.beatCount = 0;
+            this.tempo = 120; // BPM
+            this.timerID = null;
+        }
+
+        init() {
+            if(!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+
+        playBGM() {
+            this.init();
+            if(this.ctx.state === 'suspended') this.ctx.resume();
+            this.isPlaying = true;
+            this.beatCount = 0;
+            this.nextNoteTime = this.ctx.currentTime + 0.1;
+            this.scheduler();
+        }
+
+        stopBGM() {
+            this.isPlaying = false;
+            clearTimeout(this.timerID);
+        }
+
+        scheduler() {
+            if(!this.isPlaying) return;
+            // Schedule ahead
+            while(this.nextNoteTime < this.ctx.currentTime + 0.1) {
+                this.playBeat(this.nextNoteTime, this.beatCount);
+                // Advance time (1/4 note)
+                // Speed slider (2-15) affects tempo roughly 100-160 BPM
+                const currentBPM = 110 + (PARAMS.speed * 4); 
+                const secondsPerBeat = 60.0 / currentBPM;
+                this.nextNoteTime += secondsPerBeat;
+                this.beatCount++;
+            }
+            this.timerID = setTimeout(()=>this.scheduler(), 25);
+        }
+
+        playBeat(time, beat) {
+            const step = beat % 4; // 0, 1, 2, 3
+            
+            // 1. Kick on 0 and 2
+            if(step === 0 || step === 2) {
+                this.osc(time, 150, 'sine', 0.5, 50, 0.01);
+            }
+            
+            // 2. Hi-hat on every beat + off-beat (8th notes style simplified)
+            this.noise(time, 0.05);
+            
+            // 3. Snare/Clap on 2 (optional, keep simple)
+            if(step === 2) {
+                this.noise(time, 0.15); // Louder noise
+            }
+
+            // 4. Bass pulse
+            if(step === 0) {
+                this.osc(time, 80, 'triangle', 0.3, 40, 0.2);
+            }
+        }
+
+        // SFX generators
+        osc(time, freq, type, vol, endFreq, dur) {
+            const o = this.ctx.createOscillator();
+            const g = this.ctx.createGain();
+            o.connect(g); g.connect(this.ctx.destination);
+            o.type = type;
+            o.frequency.setValueAtTime(freq, time);
+            if(endFreq) o.frequency.exponentialRampToValueAtTime(endFreq, time + dur);
+            g.gain.setValueAtTime(vol, time);
+            g.gain.exponentialRampToValueAtTime(0.01, time + dur);
+            o.start(time); o.stop(time + dur);
+        }
+
+        noise(time, dur) {
+            // Simple buffer noise
+            const bufSize = this.ctx.sampleRate * dur;
+            const buf = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
+            const data = buf.getChannelData(0);
+            for(let i=0; i<bufSize; i++) data[i] = Math.random()*2 - 1;
+            
+            const src = this.ctx.createBufferSource();
+            src.buffer = buf;
+            const f = this.ctx.createBiquadFilter();
+            f.type = 'highpass'; f.frequency.value = 1000;
+            const g = this.ctx.createGain();
+            g.gain.value = 0.3;
+            g.gain.exponentialRampToValueAtTime(0.01, time + dur);
+            
+            src.connect(f); f.connect(g); g.connect(this.ctx.destination);
+            src.start(time);
+        }
+    }
+
+    const AUDIO = new AudioSynth();
+
+    // ---------------- Core Load ----------------
+    async function initSystem() {
+        try {
+            updateLoad(10, "载入 MediaPipe Pose 库...");
+            
+            POSE = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+            
+            POSE.setOptions({
+                modelComplexity: 1,
+                smoothLandmarks: true,
+                enableSegmentation: false, 
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            POSE.onResults(onPoseResults); 
+            
+            updateLoad(40, "获取摄像头权限...");
+            const vRaw = document.getElementById('video_raw');
+            
+            const cam = new Camera(vRaw, {
+                onFrame: async () => { await POSE.send({image: vRaw}); },
+                width: W, height: H
+            });
+            await cam.start(); 
+            updateLoad(90, "XSimple AI 正在校准...");
+
+        } catch (err) {
+            document.getElementById('err-log').innerText = "FATAL: " + err.message; 
+        }
+    }
+
+    function updateLoad(pct, msg) {
+        DOM.pgLd.style.width = pct+"%";
+        DOM.txtLd.innerText = msg;
+    }
+
+    function onPoseResults(res) {
+        FRAME_DATA = res; 
+        if(!STATE.ready && res.poseLandmarks) {
+            STATE.ready = true;
+             DOM.loader.style.display='none';
+             DOM.panel.style.display='block';
+             requestAnimationFrame(renderLoop);
+        }
+        if(res.poseLandmarks) updatePhysics(res.poseLandmarks);
+    }
+    
+    function updatePhysics(lm) {
+        const rawLx = lm[19].x * W; const rawLy = lm[19].y * H;
+        const rawRx = lm[20].x * W; const rawRy = lm[20].y * H;
+        const alpha = 0.5;
+        // Low pass filter on movement
+        Hands.L.vx = (Hands.L.vx * alpha) + ((rawLx - Hands.L.x)*(1-alpha));
+        Hands.L.vy = (Hands.L.vy * alpha) + ((rawLy - Hands.L.y)*(1-alpha));
+        Hands.L.x = rawLx; Hands.L.y = rawLy;
+
+        Hands.R.vx = (Hands.R.vx * alpha) + ((rawRx - Hands.R.x)*(1-alpha));
+        Hands.R.vy = (Hands.R.vy * alpha) + ((rawRy - Hands.R.y)*(1-alpha));
+        Hands.R.x = rawRx; Hands.R.y = rawRy;
+    }
+
+    // ---------------- Render Loop ----------------
+    let lastSpawn = 0;
+
+    function renderLoop(time) {
+        // 1. Draw BG
+        if(FRAME_DATA) renderBaseLayer(CTX, FRAME_DATA);
+        else CTX.clearRect(0,0,W,H);
+
+        // 2. Draw Skeleton
+        if(FRAME_DATA && FRAME_DATA.poseLandmarks) drawHandsNeon(CTX, Hands);
+
+        // 3. Logic
+        if (STATE.scene === 'GAME') {
+            updateGame(time);
+        }
+
+        requestAnimationFrame(renderLoop);
+    }
+    
+    function renderBaseLayer(c, d) {
+        const mode = PARAMS.bgMode;
+        
+        // Removed Blur logic, kept Seg vs Real
+        if (mode === 'REAL' || !d.segmentationMask) {
+            c.drawImage(d.image, 0, 0, W, H);
+            c.fillStyle="rgba(0,0,0,0.5)"; c.fillRect(0,0,W,H); // Darken for UI pop
+        } else {
+             c.save();
+             c.clearRect(0,0,W,H);
+             c.drawImage(d.segmentationMask, 0, 0, W, H);
+             c.globalCompositeOperation = 'source-in';
+             c.drawImage(d.image, 0, 0, W, H);
+             
+             c.globalCompositeOperation = 'destination-over';
+             // Image BG
+             if (mode.startsWith('IMG')) {
+                 const id = mode==='IMG_CITY' ? 'img_city' : 'img_forest';
+                 const img = document.getElementById(id);
+                 if(img.complete) c.drawImage(img, 0, 0, W, H);
+                 else { c.fillStyle="#333"; c.fillRect(0,0,W,H);}
+             }
+             c.restore();
+        }
+    }
+
+    function drawHandsNeon(c, h) {
+        c.lineWidth=5; 
+        // L
+        c.shadowBlur=20; c.shadowColor="cyan"; c.fillStyle="rgba(0, 255, 255, 0.3)"; c.strokeStyle="#0ff";
+        c.beginPath(); c.arc(h.L.x, h.L.y, 40, 0, 6.28); c.fill(); c.stroke();
+        // R
+        c.shadowColor="magenta"; c.fillStyle="rgba(255, 0, 255, 0.3)"; c.strokeStyle="#f0f";
+        c.beginPath(); c.arc(h.R.x, h.R.y, 40, 0, 6.28); c.fill(); c.stroke();
+        c.shadowBlur=0;
+    }
+
+    /* ---------------- Game Entities ---------------- */
+    class TargetBox {
+        constructor() {
+            this.active = true;
+            this.x = 200 + Math.random()*(W-400); 
+            this.y = -100;
+            this.speed = PARAMS.speed * (0.9 + Math.random()*0.4); 
+            
+            const roll = Math.random() * 100;
+            if( roll < PARAMS.bombPct) {
+                this.type = "BOMB"; this.color = "#444";
+            } else {
+                this.type = "PAD";
+                const sum = PARAMS.wHorz + PARAMS.wVert + PARAMS.wFree;
+                const r2 = Math.random() * sum;
+                if(r2 < PARAMS.wHorz) { this.dir = 'HORZ'; this.color="#00beff"; }
+                else if (r2 < PARAMS.wHorz + PARAMS.wVert) { this.dir='VERT'; this.color="#ffaa00"; }
+                else { this.dir='FREE'; this.color="#22ff66"; }
+            }
+        }
+        update() { this.y += this.speed; if(this.y>H+100) this.active=false; }
+        draw(c) {
+             c.save(); c.translate(this.x, this.y);
+             if(this.type === "BOMB") {
+                 c.font="70px Arial"; c.textAlign="center"; c.textBaseline="middle"; 
+                 c.fillText("🧨", 0,0);
+                 c.beginPath(); c.strokeStyle="red"; c.lineWidth=3; c.arc(0,0,50,0,6.28); c.stroke();
+             } else {
+                 c.beginPath(); c.arc(0,0, 50, 0, 6.28);
+                 c.fillStyle = this.color; c.globalAlpha=0.3; c.fill();
+                 c.globalAlpha=1.0; c.strokeStyle = this.color; c.lineWidth=4; c.stroke();
+                 c.fillStyle="#fff"; c.font="bold 40px Arial"; c.textAlign="center"; c.textBaseline="middle";
+                 let symbol = (this.dir==='HORZ') ? '↔' : (this.dir==='VERT' ? '↕' : '◎');
+                 c.fillText(symbol, 0,0);
+             }
+             c.restore();
+        }
+    }
+
+    function updateGame(time) {
+        const now = Date.now();
+        // Time Check
+        let elapsed = (now - STATE.startTime)/1000;
+        let left = Math.ceil(PARAMS.dur - elapsed);
+        if(left <= 0 || STATE.hp <= 0) { ACTION_STOP(); return; }
+        
+        // Update DOM HUD (HTML比Canvas刷新的更清晰)
+        DOM.hudTime.innerText = left;
+        
+        // Spawn
+        const interval = 20000 / (PARAMS.speed * 2.5);
+        if(now - lastSpawn > interval) {
+            GameObjects.targets.push(new TargetBox());
+            lastSpawn = now;
+        }
+
+        // --- Box Logic ---
+        for(let i=GameObjects.targets.length-1; i>=0; i--) {
+            let t = GameObjects.targets[i];
+            t.update(); t.draw(CTX);
+            if(!t.active) { GameObjects.targets.splice(i,1); continue; }
+
+            // Collision
+            ['L','R'].forEach( hKey => {
+                 let curH = Hands[hKey];
+                 let dist = Math.hypot(curH.x - t.x, curH.y - t.y);
+                 if(dist < 70) hitLogic(t, curH);
+            });
+        }
+        
+        // --- Effects ---
+        GameObjects.floatText = GameObjects.floatText.filter(f => {
+            f.y-=2; f.life-=0.02;
+            if(f.life>0) {
+                CTX.globalAlpha=f.life; CTX.fillStyle=f.col; 
+                CTX.font="bold 30px Arial"; CTX.fillText(f.msg, f.x, f.y); CTX.globalAlpha=1;
+                return true;
+            } return false;
+        });
+    }
+
+    function hitLogic(target, hand) {
+        if(!target.active) return;
+        const MIN = 3; 
+
+        if(target.type === 'BOMB') {
+            AUDIO.osc(AUDIO.ctx.currentTime, 100, 'sawtooth', 0.8, 10, 0.3); // SFX
+            STATE.hp--;
+            DOM.hudHp.innerText = STATE.hp;
+            target.active = false;
+            // Red flash
+            CTX.fillStyle="rgba(255,0,0,0.5)"; CTX.fillRect(0,0,W,H);
+        } else {
+             // Velocity check
+             if(Math.abs(hand.vx) < MIN && Math.abs(hand.vy) < MIN) return;
+
+             let vOk = false;
+             if(target.dir === "FREE") vOk = true; 
+             else if(target.dir === "HORZ" && Math.abs(hand.vx) > Math.abs(hand.vy)) vOk = true;
+             else if(target.dir === "VERT" && Math.abs(hand.vy) > Math.abs(hand.vx)) vOk = true;
+             
+             if(vOk) {
+                 AUDIO.osc(AUDIO.ctx.currentTime, 600 + Math.random()*200, 'square', 0.1, 800, 0.1); // SFX
+                 STATE.score += 100;
+                 DOM.hudScore.innerText = STATE.score; // Update HTML HUD
+                 target.active = false;
+                 GameObjects.floatText.push({x:target.x, y:target.y, msg:"+100", col:target.color, life:1.0});
+             }
+        }
+    }
+
+    // --- Actions ---
+    window.ACTION_START = function() {
+        GameObjects.targets = []; 
+        GameObjects.floatText = [];
+        STATE.score = 0; 
+        STATE.hp = 3; 
+        STATE.scene = 'GAME'; 
+        STATE.startTime = Date.now();
+        
+        // UI State
+        DOM.panel.style.display = "none"; // Hide Panel
+        DOM.gameHud.style.display = "flex"; // Show Score
+        DOM.settingsBtn.style.display = "block"; // Show Gear
+        DOM.resModal.style.display = 'none';
+
+        // Reset Displays
+        DOM.hudScore.innerText="0"; 
+        DOM.hudHp.innerText="3";
+
+        // Audio
+        AUDIO.playBGM();
+    }
+
+    window.ACTION_STOP = function() {
+        STATE.scene = 'MENU';
+        AUDIO.stopBGM();
+
+        // UI Switch
+        DOM.gameHud.style.display = "none";
+        DOM.settingsBtn.style.display = "none";
+        DOM.panel.style.display = 'none'; // Ensure main panel is hidden
+
+        // Show Result Modal
+        DOM.resModal.style.display = "flex";
+        document.getElementById('res-score').innerText = STATE.score;
+        let detail = "不错的开始！";
+        if(STATE.score > 1000) detail = "身手敏捷！";
+        if(STATE.score > 3000) detail = "拳王再世！";
+        document.getElementById('res-detail').innerText = detail;
+    }
+
+    window.CLOSE_RESULT = function() {
+        DOM.resModal.style.display = 'none';
+        DOM.panel.style.display = 'block'; // Back to menu
+    }
+    
+    window.TOGGLE_PANEL = function() {
+        // Toggle menu during game (Pause-like behavior visually, though game runs)
+        if(DOM.panel.style.display === 'none') {
+            DOM.panel.style.display = 'block';
+        } else {
+            DOM.panel.style.display = 'none';
+        }
+    }
+    
+    // Boot
+    initSystem();
+
+</script>
+</body>
+</html>
